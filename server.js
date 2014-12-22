@@ -7,36 +7,264 @@ Uses node-static module to serve a plot of current temperature (uses highcharts)
 
 Tom Holderness 03/01/2013
 Ref: www.cl.cam.ac.uk/freshers/raspberrypi/tutorials/temperature/
+
+Updates by Daniel Gehberger
 */
 
+//The ID of the actually used themperature sensor:
+var device_ID = '28-000005294c9c';
+
+////////////////////////////////////////////////////////
 // Load node modules
 var fs = require('fs');
 var sys = require('sys');
 var http = require('http');
 var sqlite3 = require('sqlite3');
+var express = require('express');
+var bodyParser = require('body-parser');
+var cookieParser = require('cookie-parser');
+var session = require('express-session');
 
-// Use node-static module to server chart for client-side dynamic graph
-var nodestatic = require('node-static');
+// Load local module files
+var gpio = require(__dirname+'/gpio');
+var mailer = require(__dirname+'/mailer');
 
-// Setup static server for current directory
-var staticServer = new nodestatic.Server(".");
+var fs = require('fs');
+
 
 // Setup database connection for logging
-var db = new sqlite3.Database('./piTemps.db');
+var db = new sqlite3.Database(__dirname+'/piTemps.db');
+
+////////////////////////////////////////////////////////
+// Set up express and its handlers
+var app = express()
+
+app.set('views', __dirname + '/views');
+app.set('view engine', 'ejs');
+app.use(express.static(__dirname + '/www'));
+
+app.use( bodyParser.json() );       // to support JSON-encoded bodies
+app.use(bodyParser.urlencoded({     // to support URL-encoded bodies
+  extended: true
+}));
+
+app.use(cookieParser());
+app.use(session({
+  secret: 'dewfwenfoewjfpowejcfmwehrmiwhuwieg',
+  resave: false,
+  saveUninitialized: true
+}))
+
+var https_options = {
+  key: fs.readFileSync(__dirname + '/cert/key.pem'),
+  cert: fs.readFileSync(__dirname + '/cert/cert.pem')
+};
+
+var http = require('https').createServer(https_options, app);
+
+var server = http.listen(3001, function () {
+
+  var host = server.address().address
+  var port = server.address().port
+
+  console.log('Example app listening at http://%s:%s', host, port)
+
+})
+
+//Used to validate the page access, redirect to the login page if 
+//the session is not valid
+function checkAuth(req, res, next) {
+  if (!req.session.user_id) {
+    //res.send('You are not authorized to view this page');
+	res.redirect('/login');
+  } else {
+    next();
+  }
+}
+
+//Display the login page if the session is not valid,
+//redirect to the main page otherwise
+app.get('/login', function (req, res) {
+	if (!req.session.user_id) {
+		res.render('login',{});
+	} else {
+		res.redirect('/');
+	}
+});
+
+// POST handler for the login page
+app.post('/login', function (req, res) {
+  var post = req.body;
+  
+  //Perform the hash as the password is stored this way in the DB
+  var hashed_password = require('crypto').createHash('sha256').update(post.password).digest('hex');
+  
+  var current_temp = db.get("SELECT * FROM auth WHERE name = ? AND password = ?;", post.user, hashed_password,
+      function(err, row){
+        if (err){
+			   response.writeHead(500, { "Content-type": "text/html" });
+			   response.end(err + "\n");
+			   console.log('Error serving querying database. ' + err);
+			   return;
+		}
+		
+		//User not found
+		if( row === undefined ) {
+			res.redirect('/login');
+			return;
+		}
+		
+		//Let the user in
+		req.session.user_id = row.id;
+		res.redirect('/');
+   });
+});
+
+app.get('/logout', function (req, res) {
+  delete req.session.user_id;
+  res.redirect('/login');
+});
+
+//Render the main page
+app.get('/', checkAuth, function (req, res) {
+   res.render('index',{});
+});
+
+// Query settings JSON data
+app.get('/settings_query.json', checkAuth, function (req, res) {
+	res.writeHead(200, { "Content-type": "application/json" });		
+	res.end(JSON.stringify(settings), "ascii");
+});
+
+// POST handler for settings //
+app.post('/change_settings', checkAuth, function (req, res) {
+	var post = req.body;
+	
+	console.log("Change settings POST");
+	console.log(post);
+	
+	if( post.enabled == "true" )
+		post.enabled = 1;
+	else
+		post.enabled = 0;
+	
+	for(var property in post){
+		db.run("UPDATE settings SET value = ? WHERE name = ?", post[property], property, function (err){
+			if( err != null )
+				console.log("DB error: "+err);
+		});
+	}
+	
+	//Update internal config
+	read_config();
+	
+	res.writeHead(200, { "Content-type": "application/json" });
+	res.end("Updated", "ascii");
+	return;
+});
+
+// Query temperature JSON data
+app.get('/temperature_query.json', checkAuth, function (req, res) {
+	var url = require('url').parse(req.url, true);
+	var pathfile = url.pathname;
+    var query = url.query;
+
+	if (query.start_date){
+		var start_date = query.start_date;
+	}
+	else{
+		var start_date = 0;
+	}   
+	// Send a message to console log
+	console.log('Database query request from '+ req.connection.remoteAddress +' records from ' + start_date+'.');
+	// call selectTemp function to get data from database
+	selectTemp(start_date, function(data){
+		res.writeHead(200, { "Content-type": "application/json" });		
+		res.end(JSON.stringify(data), "ascii");
+	});
+	return;
+});
+
+// Express setup ends here
+///////////////////////////////////////////////////
+
+
+//Stores the settings from the DB
+var settings = {};
+var heating_on = false;
+
+//Read the settings from the DB into an object
+function read_config(){
+	db.each("SELECT * FROM settings", 
+		function(err, row) {
+			if(err) {
+				console.log("DB error");
+				return;
+			}
+			
+			settings[row.name] = row.value;
+			//console.log(JSON.stringify(settings, null, 4));
+		}
+	);
+}
+
+//This function handles the GPIO for the heating
+function heating_control(command) {
+	//Save the state into the global object
+	heating_on = command;
+	
+	if( heating_on ){
+		gpio.write([gpio.LED.HEAT, gpio.LED.CONTROL]);
+	} else {
+		gpio.write([gpio.LED.CONTROL]);
+	}
+}
 
 // Write a single temperature record in JSON format to database table.
 function insertTemp(data){
+   
+   var celsius = data.temperature_record[0].celsius;
+
+	//Examine the alarm threshold for all inputs
+	if( celsius < settings.alert ) {
+		mailer.alert_control( celsius );
+	}
+  
+	if( settings.enabled == 1 ){
+		/*
+			If celsius is under ON then enable the heating
+			Heat until the celsius is under OFF
+		*/
+		if ( !heating_on ) {
+			if( celsius < settings.on ) {
+				console.log("Start heating! " + celsius + " < " + settings.on + " (on)");
+				heating_control(true); 
+			} else {
+				console.log("Waiting to cool until " + celsius + " > " + settings.on + " (on)");
+			}
+		}else if ( celsius < settings.off ) {
+			console.log("Heating until " + celsius + " < " + settings.off + " (off)");
+		} else {
+			console.log("Stop heating! " + celsius + " >= " + settings.off + " (off)");
+			heating_control(false);
+		}
+	} else {
+		//NO heating
+		console.log("!enabled, temperature: " + celsius);
+		heating_control(false);
+	}
+
    // data is a javascript object   
-   var statement = db.prepare("INSERT INTO temperature_records VALUES (?, ?)");
+   var statement = db.prepare("INSERT INTO temperature_records VALUES (?, ?, ?, ?, ?)");
    // Insert values into prepared statement
-   statement.run(data.temperature_record[0].unix_time, data.temperature_record[0].celsius);
+   statement.run(data.temperature_record[0].unix_time, data.temperature_record[0].celsius, settings.off, settings.on, heating_on);
    // Execute the statement
    statement.finalize();
 }
 
 // Read current temperature from sensor
 function readTemp(callback){
-   fs.readFile('/sys/bus/w1/devices/28-00000400a88a/w1_slave', function(err, buffer)
+   fs.readFile('/sys/bus/w1/devices/'+device_ID+'/w1_slave', function(err, buffer)
 	{
       if (err){
          console.error(err);
@@ -73,105 +301,54 @@ function logTemp(interval){
 };
 
 // Get temperature records from database
-function selectTemp(num_records, start_date, callback){
+function selectTemp(start_date, callback){
    // - Num records is an SQL filter from latest record back trough time series, 
    // - start_date is the first date in the time-series required, 
    // - callback is the output function
-   var current_temp = db.all("SELECT * FROM (SELECT * FROM temperature_records WHERE unix_time > (strftime('%s',?)*1000) ORDER BY unix_time DESC LIMIT ?) ORDER BY unix_time;", start_date, num_records,
+   var current_temp = db.all("SELECT * FROM temperature_records WHERE unix_time > ? ORDER BY unix_time", start_date,
       function(err, rows){
          if (err){
 			   response.writeHead(500, { "Content-type": "text/html" });
-			   response.end(err + "\n");
+			   response.end("\n");
 			   console.log('Error serving querying database. ' + err);
 			   return;
-				      }
+		 }
          data = {temperature_record:[rows]}
          callback(data);
    });
 };
 
-// Setup node http server
-var server = http.createServer(
-	// Our main server function
-	function(request, response)
-	{
-		// Grab the URL requested by the client and parse any query options
-		var url = require('url').parse(request.url, true);
-		var pathfile = url.pathname;
-      var query = url.query;
+/////////////////////////////////////////////////////////////////
+// Exit and error handling
 
-		// Test to see if it's a database query
-		if (pathfile == '/temperature_query.json'){
-         // Test to see if number of observations was specified as url query
-         if (query.num_obs){
-            var num_obs = parseInt(query.num_obs);
-         }
-         else{
-         // If not specified default to 20. Note use -1 in query string to get all.
-            var num_obs = -1;
-         }
-         if (query.start_date){
-            var start_date = query.start_date;
-         }
-         else{
-            var start_date = '1970-01-01T00:00';
-         }   
-         // Send a message to console log
-         console.log('Database query request from '+ request.connection.remoteAddress +' for ' + num_obs + ' records from ' + start_date+'.');
-         // call selectTemp function to get data from database
-         selectTemp(num_obs, start_date, function(data){
-            response.writeHead(200, { "Content-type": "application/json" });		
-	         response.end(JSON.stringify(data), "ascii");
-         });
-      return;
-      }
-      
-      // Test to see if it's a request for current temperature   
-      if (pathfile == '/temperature_now.json'){
-            readTemp(function(data){
-			      response.writeHead(200, { "Content-type": "application/json" });		
-			      response.end(JSON.stringify(data), "ascii");
-               });
-      return;
-      }
-      
-      // Handler for favicon.ico requests
-		if (pathfile == '/favicon.ico'){
-			response.writeHead(200, {'Content-Type': 'image/x-icon'});
-			response.end();
-
-			// Optionally log favicon requests.
-			//console.log('favicon requested');
-			return;
-		}
-
-
-		else {
-			// Print requested file to terminal
-			console.log('Request from '+ request.connection.remoteAddress +' for: ' + pathfile);
-
-			// Serve file using node-static			
-			staticServer.serve(request, response, function (err, result) {
-					if (err){
-						// Log the error
-						sys.error("Error serving " + request.url + " - " + err.message);
-						
-						// Respond to the client
-						response.writeHead(err.status, err.headers);
-						response.end('Error 404 - file not found');
-						return;
-						}
-					return;	
-					})
-		}
+process.on('uncaughtException', function(err) {
+  console.log('Caught exception: ' + err);
+  exit();
 });
 
+process.on('SIGINT',exit);
+process.on('SIGTERM',exit);
+process.on('SIGHUP',exit);
+
+function exit(){
+    console.log("Received exit command.");
+    
+	//This disables all the GPIO outputs
+	gpio.shutDown(function(){
+		return  process.exit();
+    });
+}
+
+
+/////////////////////////////////////////////////////////////////
+// Actual startup part:
+
+read_config();
+
 // Start temperature logging (every 5 min).
-var msecs = (60 * 5) * 1000; // log interval duration in milliseconds
+var msecs = (5*60) * 1000; // log interval duration in milliseconds
 logTemp(msecs);
 // Send a message to console
 console.log('Server is logging to database at '+msecs+'ms intervals');
-// Enable server
-server.listen(8000);
-// Log message
-console.log('Server running at http://localhost:8000');
+//Switch on the control LED
+gpio.write([gpio.LED.CONTROL]);

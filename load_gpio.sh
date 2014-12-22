@@ -28,8 +28,8 @@ function processYes {
   echo "All done. "
 }
 
-# modprobe w1-gpio # load gpio module
-# modprobe w1-therm # load temperature module
+ modprobe w1-gpio # load gpio module
+ modprobe w1-therm # load temperature module
 
 echo "Modules loaded for current session."
 echo -n "Do you want to add the modules to /etc/modules? [yn]: "

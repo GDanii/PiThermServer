@@ -1,184 +1,187 @@
 <% include partials/header %>
-<script src="http://code.jquery.com/jquery-1.8.3.min.js" type="text/javascript"></script>
-		<script src="http://code.highcharts.com/highcharts.js" type="text/javascript"></script>
-		<script type="text/javascript">
-		
-      var chart; // global chart variable
-      // Get data from server in JSON format (query time series when sensor was outside).
-      function getData(){
-         $.getJSON('/temperature_query.json?num_obs=-1&start_date=2013-01-23T16:00', function(data){
-            var series = {
-               id: 'series',
-               name: 'DS18B20 sensor (\u00B10.5\u00B0C)',
-               type: 'line',
-			   yAxis: 0,
-               data: []
-               };
-			var on = {
-               id: 'on',
-               name: 'ON threshold',
-               type: 'line',
-               yAxis: 0,
-			   data: []
-               };
-			var off = {
-               id: 'off',
-               name: 'OFF threshold',
-               type: 'line',
-			   yAxis: 0,
-               data: []
-               };
-			var heating = {
-               id: 'heating',
-               name: 'Heating',
-               type: 'area',
-			   yAxis: 1,
-               data: []
-               };
-            var i = 0;
-            // Iterate JSON data series and add to plot
-            while (data.temperature_record[0][i])
-            {
-               series.data.push([data.temperature_record[0][i].unix_time, data.temperature_record[0][i].celsius]);
-			   on.data.push([data.temperature_record[0][i].unix_time, data.temperature_record[0][i].on_threshold]);
-			   off.data.push([data.temperature_record[0][i].unix_time, data.temperature_record[0][i].off_threshold]);
-			   heating.data.push([data.temperature_record[0][i].unix_time, data.temperature_record[0][i].heating]);
-               i++;
-            }
-         chart.addSeries(series);
-		 chart.addSeries(on);
-		 chart.addSeries(off);
-		 chart.addSeries(heating);
-         });
-      }
-	</script>
+<script src="https://code.jquery.com/jquery-1.8.3.min.js" type="text/javascript"></script>
+<script src="https://code.highcharts.com/highcharts.js" type="text/javascript"></script>
 
-   <script type="text/javascript">
-   // Configure the plot
-   $(document).ready(function() {
-      chart = new Highcharts.Chart({
-         chart: {
-            renderTo: 'container',
-            //type: 'spline',
-            zoomType: 'x',
-            spaceRight: 20,
-            events: {load: getData()}
-               },
-        title: {
-		       text: 'Plot of temperatures from Raspberry Pi logger'},
-        subtitle: {
-                text: 'Click and drag in the plot area to zoom in',
-                align: 'right',  
-               },
-               
-        xAxis: {
-		       type: 'datetime',
-		       tickPixelInterval: 150,
-		       maxZoom: 20 * 1000,
-		       title: {
-			      text: 'Time',
-			      margin: 15
-			   }},
-         yAxis: [{
-		       minPadding: 0.2,
-		       maxPadding: 0.2,
-             showFirstLabel: false,
-		       title: {
-		           text: 'Temperature \u00B0C',
-		           margin: 15
-		       }},{
-		       minPadding: 0.2,
-		       maxPadding: 0.2,
-             showFirstLabel: false,
-		       title: {
-		           text: 'Heating on/off',
-		           margin: 15
-		       },
-			   opposite: true}],
-		tooltip: {
-				shared: true
-		},
-        plotOptions: {
-			area: {
-				fillOpacity: 0.2,
-				lineWidth: 0
-			}
-                        },
-         })
-   });        
+<script type="text/javascript">
+//Get the settings from the server
+function getSettings(){
+	$.getJSON('/settings_query.json', function(settings){
+		
+		if( settings.enabled == 1 )
+			document.settingsform.onoff.checked = true;
+		else
+			document.settingsform.onoff.checked = false;
+			
+		document.settingsform.on.value = settings.on;
+		document.settingsform.off.value = settings.off;
+		document.settingsform.alert.value = settings.alert;
+	});
+}
+
+function update_settings(){
+	$.post( "change_settings", { enabled: document.settingsform.onoff.checked,
+								 on: document.settingsform.on.value,
+								 off: document.settingsform.off.value,
+								 alert: document.settingsform.alert.value}, function( data ) {
+	});
+}
+
+function update_graph(delta) {
+	//Clear the chart
+	while(chart.series.length > 0)
+		chart.series[0].remove(true);
+	
+	getData(Date.now()-delta);
+}
 </script>
 
 
+<script type="text/javascript">
+  var chart; // global chart variable
+  // Get data from server in JSON format (query time series when sensor was outside).
+  function getData(since){
+	 if( since == null )
+		since=0;
+	
+	 $.getJSON('/temperature_query.json?start_date='+since, function(data){
+		var series = {
+		   id: 'series',
+		   name: 'DS18B20 sensor',
+		   type: 'line',
+		   yAxis: 0,
+		   color: '#FFA600',
+		   lineWidth: 3,
+		   data: []
+		   };
+		var on = {
+		   id: 'on',
+		   name: 'ON threshold',
+		   type: 'line',
+		   yAxis: 0,
+		   color: '#0008FA',
+		   lineWidth: 1,
+		   data: []
+		   };
+		var off = {
+		   id: 'off',
+		   name: 'OFF threshold',
+		   type: 'line',
+		   yAxis: 0,
+		   color: '#FA0000',
+		   lineWidth: 1,
+		   data: []
+		   };
+		var heating = {
+		   id: 'heating',
+		   name: 'Heating',
+		   type: 'area',
+		   yAxis: 1,
+		   color: '#FAFF5C',
+		   data: []
+		   };
+		var i = 0;
+		// Iterate JSON data series and add to plot
+		while (data.temperature_record[0][i])
+		{
+		   series.data.push([data.temperature_record[0][i].unix_time, data.temperature_record[0][i].celsius]);
+		   on.data.push([data.temperature_record[0][i].unix_time, data.temperature_record[0][i].on_threshold]);
+		   off.data.push([data.temperature_record[0][i].unix_time, data.temperature_record[0][i].off_threshold]);
+		   heating.data.push([data.temperature_record[0][i].unix_time, data.temperature_record[0][i].heating]);
+		   i++;
+		}
+	 chart.addSeries(series);
+	 chart.addSeries(on);
+	 chart.addSeries(off);
+	 chart.addSeries(heating);
+	 });
+  }
+</script>
+
+<script type="text/javascript">
+// Configure the plot
+$(document).ready(function() {   
+  chart = new Highcharts.Chart({
+	 chart: {
+		renderTo: 'container',
+		//type: 'spline',
+		zoomType: 'x',
+		spaceRight: 20,
+		events: {load: getData(Date.now()-1000*60*60*24)}
+		   },
+	title: {
+		   text: ''},
+	subtitle: {
+			text: '',
+			align: 'right',  
+		   },
+		   
+	xAxis: {
+		   type: 'datetime',
+		   tickPixelInterval: 150,
+		   maxZoom: 20 * 1000,
+		   title: {
+			  text: 'Time',
+			  margin: 15
+		   }},
+	 yAxis: [{
+		   minPadding: 0.2,
+		   maxPadding: 0.2,
+		 showFirstLabel: false,
+		   title: {
+			   text: 'Temperature \u00B0C',
+			   margin: 15
+		   }},{
+		   minPadding: 0.2,
+		   maxPadding: 0.2,
+		   allowDecimals: false,
+		   categories: ['OFF', 'ON'],
+		 showFirstLabel: false,
+		   title: {
+			   text: 'Heating on/off',
+			   margin: 15
+		   },
+		   opposite: true}],
+	tooltip: {
+			shared: true
+	},
+	plotOptions: {
+		area: {
+			fillOpacity: 0.2,
+			lineWidth: 0
+		}
+	},
+	});
+	 
+	//Fill in the settings
+	getSettings();
+});        
+</script>
+
+
+<center>
+<input type="button" name="all" value="All data" onclick="update_graph(Date.now())">
+<input type="button" name="month" value="Last month" onclick="update_graph(1000*60*60*24*7*30)">
+<input type="button" name="week" value="Last week" onclick="update_graph(1000*60*60*24*7)">
+<input type="button" name="day" value="Last day" onclick="update_graph(1000*60*60*24)">
+<input type="button" name="hour" value="Last hour" onclick="update_graph(1000*60*60)">
+</center>
+<br/>
 
 <div id="container" style="width: 100%; height: 400px"></div>
 
+<form method="post" action="change_settings" name="settingsform">
+	<h2>Heating control:</h2>
 
-<div class="five">
-  <div class="button-wrap">
-    <div class="button-bg">
-      <div class="button-out">Off</div>
-      <div class="button-in">On</div>
-      <div class="button-switch"></div>
-    </div>
-  </div>
-</div>
+	<center>
+	Enable/Disable: <input type="checkbox" name="onoff" id="myonoffswitch">
+	
+	<p>Heating from <input type="text" name="on" id="on" value="" size="2">°C until <input type="text" name="off" id="off"  value="" size="2">°C</p>
+	<p>Alert threshold: <input type="text" name="alert" id="alert"  value="" size="2">°C</p>	
+	<p class="submit"><input type="button" name="commit" value="Save" onclick="update_settings()"></p>
+	</center>
+	
+</form>
 
-<script type="text/javascript">
-$('.button-wrap').on("click", function(){
-  $(this).toggleClass('button-active');
-});
-</script>
-
-
-
-
-
-
-
-
-<style type="text/css">
-div#track  {
-    width: 100px;
-    height: 16px;
-    background-color: #336;
-    border: 1px solid #336;
-    position: relative;
-}
-
-div#slider {
-    background-color: #ddd;
-    height: 16px;
-    width: 16px;
-    position: absolute;
-}
-
-div#display {
-    width: 40px; height: 20px;
-    background-color: #eee;
-    border: 1px solid #ccc;
-    padding: 4px;
-    margin: 1em 0 2em;
-}
-</style>
-
-<script type="text/javascript">
-DYN_WEB.Event.domReady( function() {
-        // args: slider id, track id, axis ('v' or 'h')
-        var slider = new DYN_WEB.Slider('slider', 'track', 'h');
-        
-        // display value when click on track or drag slider
-        slider.on_move = function(x, y) {
-            document.getElementById('display').innerHTML = parseInt(x, 10);
-        };
-    }
-);
-</script>
-
-<div id="track">
-    <div id="slider"></div>
-</div>
-
-<div id="display">&nbsp;</div>
 
 
 <% include partials/footer %>
