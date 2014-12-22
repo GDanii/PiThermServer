@@ -2,7 +2,7 @@
 var mail_period = 60 * 60 * 1000; //1 hour
 //var mail_period = 60 * 1000; //1 minute
 
-var mail_to = "daniel.gehberger@gmail.com, tibor@jumper.hu";
+var mail_to = "";
 
 var last_mail = Date.now() - mail_period; //This way we can send the first mail right away
 
@@ -14,8 +14,8 @@ exports.alert_control = function( celsius ) {
 		
 		var email   = require("emailjs");
 		var server  = email.server.connect({
-		   user:    "balatonikazan", 
-		   password:"kazan2421", 
+		   user:    "", 
+		   password:"", 
 		   host:    "smtp.gmail.com", 
 		   ssl:     true
 		});
@@ -23,7 +23,7 @@ exports.alert_control = function( celsius ) {
 		// send the message and get a callback with an error or details of the message that was sent
 		server.send({
 		   text:    "Temperature is too low ("+celsius+" °C)!", 
-		   from:    "Balatoni Kazán <balatonikazan@gmail.com>", 
+		   from:    "", 
 		   to:      mail_to,
 		   cc:      "",
 		   subject: "Balaton temperature alert ("+celsius+" °C)!"
