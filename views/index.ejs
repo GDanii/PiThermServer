@@ -99,7 +99,14 @@ function update_graph(delta) {
 
 <script type="text/javascript">
 // Configure the plot
-$(document).ready(function() {   
+$(document).ready(function() {
+
+   Highcharts.setOptions({
+        global: {
+            timezoneOffset: - 1 * 60
+        }
+    });	
+
   chart = new Highcharts.Chart({
 	 chart: {
 		renderTo: 'container',
@@ -114,7 +121,6 @@ $(document).ready(function() {
 			text: '',
 			align: 'right',  
 		   },
-		   
 	xAxis: {
 		   type: 'datetime',
 		   tickPixelInterval: 150,
