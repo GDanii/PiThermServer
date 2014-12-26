@@ -142,6 +142,10 @@ app.post('/change_settings', checkAuth, function (req, res) {
 	
 	console.log("Change settings POST");
 	console.log(post);
+
+	//Protection against infinite heating
+	if( post.on > post.off - 1 )
+		return;
 	
 	if( post.enabled == "true" )
 		post.enabled = 1;
